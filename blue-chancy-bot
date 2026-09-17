@@ -1,0 +1,185 @@
+import telebot
+from telebot import types
+import random
+
+# 🚀 توكن البوت والآيدي الخاص بك كمدير
+BOT_TOKEN = '8226551274:AAE6A8g2ZuGky-JQcQlBYtP_QBUfsraAMrI'
+ADMIN_ID = 6701714108
+
+bot = telebot.TeleBot(BOT_TOKEN)
+
+# قواعد البيانات الافتراضية المؤقتة
+user_balances = {}       
+user_steps = {}          
+user_history = {}        
+user_referrals = {}      
+gift_codes = {}          
+pending_withdraws = {}   
+all_users = set()        
+order_counter = 460      
+
+def add_to_history(chat_id, order_id, order_type, amount, status):
+    if chat_id not in user_history:
+        user_history[chat_id] = []
+    user_history[chat_id] = [op for op in user_history[chat_id] if f"ID #{order_id}" not in op]
+    emoji_status = "🟢" if status == "accepted" else "🔵" if status == "refunded" else "🔴"
+    user_history[chat_id].append(f"🆔 **ID #{order_id}**\n📌 `{order_type}`\n💰 `{amount:,.1f}`\n📊 {emoji_status} `{status}`\n---")
+
+def send_blue_menu(chat_id):
+    bal = user_balances.get(chat_id, 0.00)
+    welcome_text = f"⚡💙 **مرحبًا بك في Blue Chancy** ⚡\n\n🆔 ايدي الحساب: `{chat_id}`\n💰 الرصيد: `{bal:,.2f}` SYP"
+    
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    btn_site = types.InlineKeyboardButton('💯 حساب إيشانسي 💯', callback_data='btn_site')
+    btn_withdraw = types.InlineKeyboardButton('🏧 سحب من البوت', callback_data='btn_withdraw')
+    btn_deposit = types.InlineKeyboardButton('🤖 شحن إلى البوت', callback_data='btn_deposit')
+    btn_balance = types.InlineKeyboardButton('💰 رصيدي', callback_data='btn_balance')
+    btn_logs = types.InlineKeyboardButton('💫 سجل الطلبات', callback_data='btn_logs')
+    btn_refund = types.InlineKeyboardButton('↩️ استرداد آخر طلب سحب', callback_data='btn_refund')
+    btn_referral = types.InlineKeyboardButton('👥 الإحالات', callback_data='btn_referral')
+    btn_code = types.InlineKeyboardButton('⭐ كود هدية', callback_data='btn_code')
+    btn_support = types.InlineKeyboardButton('🏢 الدعم', callback_data='btn_support')
+    btn_info = types.InlineKeyboardButton('ℹ️ معلومات', callback_data='btn_info')
+    
+    markup.add(btn_site)
+    markup.add(btn_withdraw, btn_deposit)
+    markup.add(btn_balance, btn_logs)
+    markup.add(btn_refund)
+    markup.add(btn_referral, btn_code)
+    markup.add(btn_support, btn_info)
+    
+    bot.send_message(chat_id, welcome_text, reply_markup=markup, parse_mode="Markdown")
+
+def send_admin_panel(chat_id):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    btn1 = types.InlineKeyboardButton('➕ شحن رصيد لعميل', callback_data='adm_add')
+    btn2 = types.InlineKeyboardButton('➖ خصم رصيد من عميل', callback_data='adm_sub')
+    btn3 = types.InlineKeyboardButton('🎟️ إنشاء كود هدية', callback_data='adm_make_code')
+    btn4 = types.InlineKeyboardButton('📢 إذاعة رسالة جماعية', callback_data='adm_broadcast')
+    btn5 = types.InlineKeyboardButton('📊 إحصائيات البوت', callback_data='adm_stats')
+    
+    markup.add(btn1, btn2)
+    markup.add(btn3)
+    markup.add(btn4, btn5)
+    bot.send_message(chat_id, "⚙️ **لوحة تحكم المدير الموحدة لـ Blue Chancy:**", reply_markup=markup)
+
+@bot.message_handler(commands=['start'])
+def start_cmd(message):
+    chat_id = message.chat.id
+    all_users.add(chat_id)
+    if len(message.text.split()) > 1:
+        inviter_id = int(message.text.split())
+        if inviter_id != chat_id and chat_id not in user_referrals:
+            user_referrals[chat_id] = inviter_id
+    send_blue_menu(chat_id)
+
+@bot.message_handler(commands=['admin'])
+def admin_cmd(message):
+    if message.chat.id == ADMIN_ID:
+        send_admin_panel(message.chat.id)
+
+@bot.callback_query_handler(func=lambda call: True)
+def callback_listener(call):
+    chat_id = call.message.chat.id
+    bot.answer_callback_query(call.id)
+    global order_counter
+
+    if call.data.startswith('approve_') or call.data.startswith('reject_'):
+        action, target_id, order_id, amount, o_type = call.data.split('_')
+        target_id, order_id, amount = int(target_id), int(order_id), float(amount)
+        
+        if action == 'approve':
+            if o_type != "withdraw_bot":
+                user_balances[target_id] = user_balances.get(target_id, 0.0) + amount
+            add_to_history(target_id, order_id, o_type, amount, "accepted")
+            bot.send_message(target_id, f"✅ **تمت موافقة الإدارة على طلبك رقم #{order_id}!**")
+            bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=call.message.text + f"\n\n🟢 **حالة الطلب: تم القبول والموافقة ✅**")
+        elif action == 'reject':
+            if o_type == "withdraw_bot":
+                user_balances[target_id] = user_balances.get(target_id, 0.0) + amount
+            add_to_history(target_id, order_id, o_type, amount, "rejected")
+            bot.send_message(target_id, f"❌ **نعتذر منك!** تم رفض طلبك رقم #{order_id} من قبل الإدارة.")
+            bot.edit_message_text(chat_id=chat_id, message_id=call.message.message_id, text=call.message.text + f"\n\n🔴 **حالة الطلب: تم الرفض من قبلك ❌**")
+        return
+
+    if chat_id == ADMIN_ID:
+        if call.data == 'adm_add':
+            user_steps[chat_id] = 'adm_waiting_add'
+            bot.send_message(chat_id, "✍️ أرسل البيانات هكذا: (الآيدي-المبلغ)\nمثال: `6701714108-50000`")
+            return
+        elif call.data == 'adm_sub':
+            user_steps[chat_id] = 'adm_waiting_sub'
+            bot.send_message(chat_id, "✍️ أرسل البيانات هكذا: (الآيدي-المبلغ)\nمثال: `6701714108-20000`")
+            return
+        elif call.data == 'adm_make_code':
+            user_steps[chat_id] = 'adm_waiting_code'
+            bot.send_message(chat_id, "✍️ اكتب قيمة رصيد كود الهدية المراد إنشاؤه الآن:")
+            return
+        elif call.data == 'adm_broadcast':
+            user_steps[chat_id] = 'adm_waiting_broadcast'
+            bot.send_message(chat_id, "✍️ اكتب نص الرسالة الإذاعية الجماعية الآن:")
+            return
+        elif call.data == 'adm_stats':
+            bot.send_message(chat_id, f"📊 **إحصائيات البوت الحالية:**\n\n👥 إجمالي الأعضاء: `{len(all_users)}` مستخدم\n🎟️ الأكواد الفعالة: `{len(gift_codes)}` كود")
+            return
+
+    if call.data == 'go_back':
+        send_blue_menu(chat_id)
+    elif call.data == 'btn_balance':
+        bal = user_balances.get(chat_id, 0.00)
+        bot.send_message(chat_id, f"💰 **رصيدك الحالي:**\n\n`{bal:,.2f}` SYP")
+    elif call.data == 'btn_info':
+        bot.send_message(chat_id, "💯 **منصة سريعة وآمنة لإدارة عمليات الإيداع والسحب بكل سهولة.**\n\nBlue Chancy 💙⚡")
+    elif call.data == 'btn_logs':
+        history = user_history.get(chat_id, ["📜 لا توجد طلبات مسجلة في سجلك حتى الآن."])
+        bot.send_message(chat_id, "📋 **آخر الطلبات:**\n\n" + "\n".join(history[-6:]))
+    elif call.data == 'btn_code':
+        user_steps[chat_id] = 'waiting_for_gift_code'
+        bot.send_message(chat_id, "🎁 **كود الهدية**\n\nأرسل كود الهدية.")
+    elif call.data == 'btn_support':
+        bot.send_message(chat_id, "📞 **الدعم الفني**\n\nراسل المسؤول مباشرة:\n\n@Blue_chancy_support")
+    elif call.data == 'btn_referral':
+        bot_link = f"https://t.me{(bot.get_me().username)}?start={chat_id}"
+        ref_count = list(user_referrals.values()).count(chat_id)
+        ref_text = f"👥 **نظام الإحالات**\n\n🆔 كودك: `{chat_id}`\n🔗 الرابط: {bot_link}\n👥 عدد إحالاتك: `{ref_count}`\n💰 العمولة: 10%"
+        bot.send_message(chat_id, ref_text)
+    elif call.data == 'btn_refund':
+        if chat_id in pending_withdraws:
+            order_id, amount = pending_withdraws[chat_id]
+            user_balances[chat_id] = user_balances.get(chat_id, 0.0) + amount
+            add_to_history(chat_id, order_id, "withdraw_bot", amount, "refunded")
+            del pending_withdraws[chat_id]
+            bot.send_message(chat_id, f"↩️ **تم استرداد وإلغاء طلب السحب رقم #{order_id} بنجاح!**")
+        else:
+            bot.send_message(chat_id, "❌ لا يوجد لديك أي طلب سحب معلق حالياً لاسترداده.")
+    elif call.data == 'btn_deposit':
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(types.InlineKeyboardButton('🔵 شام كاش', callback_data='dep_sham'), types.InlineKeyboardButton('🔙 رجوع', callback_data='go_back'))
+        bot.send_message(chat_id, "📥 **اختر طريقة الشحن:**", reply_markup=markup)
+    elif call.data == 'btn_withdraw':
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(types.InlineKeyboardButton('🔵 شام كاش', callback_data='with_sham'), types.InlineKeyboardButton('🔙 رجوع', callback_data='go_back'))
+        bot.send_message(chat_id, "📤 **اختر طريقة السحب:**", reply_markup=markup)
+    elif call.data == 'dep_sham':
+        user_steps[chat_id] = 'waiting_for_sham_proof'
+        bot.send_message(chat_id, "🔵 **الشحن عبر شام كاش**\n\nقم بتحويل المبلغ إلى العنوان:\n\n`15f5576d6c2899631cca6b6d949be1e3`\n\nبعد انتهاء التحويل أرسل رقم العملية هنا.")
+    elif call.data == 'with_sham':
+        user_steps[chat_id] = 'waiting_for_withdraw_amt'
+        bot.send_message(chat_id, "🏧 **السحب عبر شام كاش**\n\nاكتب المبلغ المراد سحبه الآن:")
+    elif call.data == 'btn_site':
+        bot.send_message(chat_id, "💯 لربط حساب إيشانسي وتدوير المبالغ تلقائياً، يرجى التواصل مع الدعم الفني وتزويدهم ببيانات API.")
+
+@bot.message_handler(func=lambda message: True, content_types=['text'])
+def handle_text_inputs(message):
+    chat_id = message.chat.id
+    step = user_steps.get(chat_id)
+    username = f"@{message.from_user.username}" if message.from_user.username else message.from_user.first_name
+    global order_counter
+
+    if chat_id == ADMIN_ID:
+        if step == 'adm_waiting_add' and '-' in message.text:
+            user_steps[chat_id] = None
+            t_id, amt = message.text.split('-')
+            user_balances[int(t_id)] = user_balances.get(int(t_id), 0.0) + float(amt)
+            bot.reply_to(message, "✅ تم شحن رصيد الحساب بنجاح.")
+            bot.send_message(int(t_id), f"💰 تم شحن حسابك في البوت بقيمة: `+{float(amt):,}` ل.س")
